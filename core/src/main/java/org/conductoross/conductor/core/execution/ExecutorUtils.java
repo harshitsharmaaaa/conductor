@@ -13,9 +13,11 @@
 package org.conductoross.conductor.core.execution;
 
 import java.time.Duration;
+import java.util.Optional;
 
 import com.netflix.conductor.common.metadata.tasks.TaskDef;
 import com.netflix.conductor.common.metadata.tasks.TaskType;
+import com.netflix.conductor.common.metadata.workflow.WorkflowDef;
 import com.netflix.conductor.model.TaskModel;
 import com.netflix.conductor.model.WorkflowModel;
 
@@ -71,6 +73,9 @@ public class ExecutorUtils {
      *             </ul>
      *         <li><b>Any other status</b> (COMPLETED, FAILED, …): skipped — no candidate produced.
      *       </ul>
+     *   <li>The remaining workflow-level timeout is also a candidate, with a one-second buffer
+     *       after its deadline, so a long task-level timeout or indefinite wait cannot postpone
+     *       evaluation past the workflow deadline.
      *   <li>Each candidate is clamped to 0 if negative, then capped at {@code maxPostponeDuration}
      *       when {@code maxPostponeDuration > 0}.
      *   <li>The final postpone duration is the <em>minimum</em> of all candidates, so the workflow
@@ -93,7 +98,8 @@ public class ExecutorUtils {
         long workflowOffsetTimeoutSeconds = workflowOffsetTimeout.getSeconds();
         long maxPostponeSeconds = maxPostponeDuration.getSeconds();
 
-        Long postponeDurationSeconds = null;
+        Long postponeDurationSeconds =
+                workflowTimeoutPostponeSeconds(workflowModel, currentTimeMillis).orElse(null);
         for (TaskModel taskModel : workflowModel.getTasks()) {
             Long candidateSeconds = null;
             if (isActiveSubWorkflow(taskModel)) {
@@ -175,6 +181,34 @@ public class ExecutorUtils {
                 workflowOffsetTimeoutSeconds,
                 workflowModel.getWorkflowId());
         return Duration.ofSeconds(Math.max(0, unackSeconds));
+    }
+
+    /**
+     * Computes the seconds remaining until the workflow-level timeout is due for evaluation, with a
+     * one-second buffer after the deadline. The timeout start time matches {@code
+     * DeciderService.checkWorkflowTimeout()}.
+     *
+     * @param workflowModel the workflow whose timeout is evaluated
+     * @param currentTimeMillis current time in epoch milliseconds
+     * @return the remaining evaluation delay, or empty when no future workflow timeout is due
+     */
+    public static Optional<Long> workflowTimeoutPostponeSeconds(
+            WorkflowModel workflowModel, long currentTimeMillis) {
+        WorkflowDef workflowDef = workflowModel.getWorkflowDefinition();
+        if (workflowDef == null || workflowDef.getTimeoutSeconds() <= 0) {
+            return Optional.empty();
+        }
+
+        long timeoutStartTime =
+                workflowModel.getLastRetriedTime() > 0
+                        ? workflowModel.getLastRetriedTime()
+                        : workflowModel.getCreateTime();
+        long elapsedSeconds = (currentTimeMillis - timeoutStartTime) / 1000;
+        long timeoutSeconds = workflowDef.getTimeoutSeconds();
+        if (elapsedSeconds >= timeoutSeconds) {
+            return Optional.empty();
+        }
+        return Optional.of(timeoutSeconds - elapsedSeconds + 1);
     }
 
     /**

@@ -1732,6 +1732,58 @@ public class TestDeciderService {
     }
 
     @Test
+    public void testCheckWorkflowTimeoutDoesNotChangeTerminalWorkflow() {
+        WorkflowDef workflowDef = new WorkflowDef();
+        workflowDef.setName("test");
+        workflowDef.setTimeoutSeconds(1);
+        workflowDef.setTimeoutPolicy(WorkflowDef.TimeoutPolicy.TIME_OUT_WF);
+
+        WorkflowModel workflow = new WorkflowModel();
+        workflow.setWorkflowDefinition(workflowDef);
+        workflow.setCreateTime(System.currentTimeMillis() - 10_000);
+
+        for (WorkflowModel.Status status :
+                List.of(
+                        WorkflowModel.Status.COMPLETED,
+                        WorkflowModel.Status.FAILED,
+                        WorkflowModel.Status.TIMED_OUT,
+                        WorkflowModel.Status.TERMINATED)) {
+            workflow.setStatus(status);
+
+            deciderService.checkWorkflowTimeout(workflow);
+
+            assertEquals(status, workflow.getStatus());
+        }
+    }
+
+    @Test
+    public void testWorkflowTimeoutIsEnforcedForIndefiniteWaitTask() {
+        WorkflowDef workflowDef = new WorkflowDef();
+        workflowDef.setName("test");
+        workflowDef.setTimeoutSeconds(1);
+        workflowDef.setTimeoutPolicy(WorkflowDef.TimeoutPolicy.TIME_OUT_WF);
+
+        TaskModel waitTask = new TaskModel();
+        waitTask.setTaskType(TaskType.TASK_TYPE_WAIT);
+        waitTask.setStatus(TaskModel.Status.IN_PROGRESS);
+        waitTask.setWaitTimeout(0);
+
+        WorkflowModel workflow = new WorkflowModel();
+        workflow.setWorkflowId("workflow_id");
+        workflow.setStatus(WorkflowModel.Status.RUNNING);
+        workflow.setWorkflowDefinition(workflowDef);
+        workflow.setTasks(List.of(waitTask));
+        workflow.setCreateTime(System.currentTimeMillis() - 10_000);
+
+        try {
+            deciderService.checkWorkflowTimeout(workflow);
+            fail("Expected the configured workflow timeout to terminate the workflow");
+        } catch (TerminateWorkflowException exception) {
+            assertEquals(WorkflowModel.Status.TIMED_OUT, exception.getWorkflowStatus());
+        }
+    }
+
+    @Test
     public void testCheckForWorkflowCompletion() {
         WorkflowDef conditionalWorkflowDef = createConditionalWF();
         WorkflowTask terminateWT = new WorkflowTask();

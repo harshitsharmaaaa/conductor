@@ -17,6 +17,7 @@ import java.util.Optional;
 import java.util.Random;
 import java.util.concurrent.CompletableFuture;
 
+import org.conductoross.conductor.core.execution.ExecutorUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -138,7 +139,10 @@ public class WorkflowSweeper {
     @VisibleForTesting
     void unack(WorkflowModel workflowModel, long workflowOffsetTimeout) {
         // Pick the minimum next-evaluation delay across eligible tasks, capped by maxPostpone.
-        Long postponeDurationSeconds = null;
+        Long postponeDurationSeconds =
+                ExecutorUtils.workflowTimeoutPostponeSeconds(
+                                workflowModel, System.currentTimeMillis())
+                        .orElse(null);
         long maxPostponeSeconds = properties.getMaxPostponeDurationSeconds().getSeconds();
         for (TaskModel taskModel : workflowModel.getTasks()) {
             Long candidateSeconds = null;

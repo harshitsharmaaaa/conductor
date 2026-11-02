@@ -166,6 +166,64 @@ public class ExecutorUtilsTest {
         assertEquals(30, result.getSeconds());
     }
 
+    @Test
+    public void computePostponeSchedulesIndefiniteWaitAtWorkflowTimeout() {
+        TaskModel waitTask = newTask(TaskType.TASK_TYPE_WAIT, TaskModel.Status.IN_PROGRESS);
+        waitTask.setWaitTimeout(0);
+        WorkflowModel workflow = newWorkflow(Arrays.asList(waitTask), 60);
+        workflow.setCreateTime(System.currentTimeMillis() - 30_000);
+
+        Duration result =
+                ExecutorUtils.computePostpone(
+                        workflow, Duration.ofSeconds(1800), Duration.ofSeconds(3600));
+
+        assertTrue(
+                "The workflow deadline should take precedence over the long offset",
+                result.getSeconds() >= 30 && result.getSeconds() <= 31);
+        assertTrue("The workflow should still be scheduled in the future", result.getSeconds() > 0);
+    }
+
+    @Test
+    public void workflowTimeoutPostponeUsesLastRetriedTime() {
+        WorkflowModel workflow = newWorkflow(List.of(), 60);
+        workflow.setCreateTime(1_000L);
+        workflow.setLastRetriedTime(31_000L);
+
+        assertEquals(
+                Optional.of(31L), ExecutorUtils.workflowTimeoutPostponeSeconds(workflow, 61_000L));
+    }
+
+    @Test
+    public void workflowTimeoutPostponeIsEmptyWhenTimeoutIsDisabledOrExpired() {
+        WorkflowModel noTimeout = newWorkflow(List.of(), 0);
+        noTimeout.setCreateTime(1_000L);
+
+        WorkflowModel expired = newWorkflow(List.of(), 60);
+        expired.setCreateTime(1_000L);
+
+        assertEquals(
+                Optional.empty(), ExecutorUtils.workflowTimeoutPostponeSeconds(noTimeout, 61_000L));
+        assertEquals(
+                Optional.empty(), ExecutorUtils.workflowTimeoutPostponeSeconds(expired, 61_000L));
+    }
+
+    @Test
+    public void computePostponeStillSchedulesTimedWaitAtWaitDeadline() {
+        TaskModel waitTask = newTask(TaskType.TASK_TYPE_WAIT, TaskModel.Status.IN_PROGRESS);
+        waitTask.setWaitTimeout(System.currentTimeMillis() + 10_000);
+        WorkflowModel workflow = newWorkflow(Arrays.asList(waitTask), 300);
+        workflow.setCreateTime(System.currentTimeMillis());
+
+        Duration result =
+                ExecutorUtils.computePostpone(
+                        workflow, Duration.ofSeconds(1800), Duration.ofSeconds(3600));
+
+        assertTrue(
+                "The timed WAIT should still be scheduled before the workflow deadline",
+                result.getSeconds() <= 10);
+        assertTrue("The timed WAIT should be scheduled in the future", result.getSeconds() > 0);
+    }
+
     /** Boundary: SCHEDULED task whose poll window has already elapsed → remaining = 0. */
     @Test
     public void computePostponeScheduledElapsedExceedsTimeout() {
@@ -263,6 +321,7 @@ public class ExecutorUtilsTest {
         workflow.setWorkflowId("workflowId");
         workflow.setWorkflowDefinition(workflowDef);
         workflow.setTasks(tasks);
+        workflow.setCreateTime(System.currentTimeMillis());
         return workflow;
     }
 

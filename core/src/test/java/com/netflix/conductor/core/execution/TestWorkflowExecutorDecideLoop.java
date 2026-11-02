@@ -27,6 +27,7 @@ import org.junit.Test;
 import com.netflix.conductor.common.metadata.workflow.WorkflowDef;
 import com.netflix.conductor.core.config.ConductorProperties;
 import com.netflix.conductor.core.dal.ExecutionDAOFacade;
+import com.netflix.conductor.core.exception.TerminateWorkflowException;
 import com.netflix.conductor.core.execution.tasks.SystemTaskRegistry;
 import com.netflix.conductor.core.execution.tasks.WorkflowSystemTask;
 import com.netflix.conductor.core.listener.TaskStatusListener;
@@ -179,6 +180,33 @@ public class TestWorkflowExecutorDecideLoop {
         verify(executionDAOFacade, atLeastOnce()).updateWorkflow(workflow);
         verify(queueDAO, atLeastOnce())
                 .push(eq(DECIDER_QUEUE), eq(workflow.getWorkflowId()), eq(0L));
+    }
+
+    @Test
+    public void testTimeoutTransitionIsNotRepeatedForTerminalWorkflow() {
+        WorkflowModel workflow = runningWorkflow("test-wf-timeout-transition");
+        TaskModel waitTask = new TaskModel();
+        waitTask.setTaskId("signal-wait");
+        waitTask.setTaskType("WAIT");
+        waitTask.setStatus(TaskModel.Status.IN_PROGRESS);
+        waitTask.setWaitTimeout(0);
+        workflow.setTasks(Collections.singletonList(waitTask));
+        when(executionDAOFacade.getWorkflowModel(workflow.getWorkflowId(), true))
+                .thenReturn(workflow);
+        when(deciderService.decide(workflow))
+                .thenThrow(
+                        new TerminateWorkflowException(
+                                "Workflow timed out", WorkflowModel.Status.TIMED_OUT));
+
+        WorkflowModel firstResult = workflowExecutor.decide(workflow.getWorkflowId());
+        WorkflowModel secondResult = workflowExecutor.decide(workflow.getWorkflowId());
+
+        assertSame(workflow, firstResult);
+        assertSame(workflow, secondResult);
+        assertEquals(WorkflowModel.Status.TIMED_OUT, workflow.getStatus());
+        assertEquals(TaskModel.Status.CANCELED, waitTask.getStatus());
+        verify(deciderService, times(1)).decide(workflow);
+        verify(executionDAOFacade, times(1)).updateWorkflow(workflow);
     }
 
     // ── helpers ──────────────────────────────────────────────────────────────

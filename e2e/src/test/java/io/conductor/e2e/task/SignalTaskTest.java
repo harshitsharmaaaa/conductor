@@ -55,6 +55,10 @@ public class SignalTaskTest {
 
     /** Registers and starts a workflow that blocks immediately on an indefinite WAIT task. */
     private String startBlockedWorkflow(String wfName) {
+        return startBlockedWorkflow(wfName, 0);
+    }
+
+    private String startBlockedWorkflow(String wfName, long timeoutSeconds) {
         WorkflowTask waitTask = new WorkflowTask();
         waitTask.setType("WAIT");
         waitTask.setName("wait_for_signal");
@@ -65,6 +69,10 @@ public class SignalTaskTest {
         def.setVersion(1);
         def.setOwnerEmail("test@conductor.io");
         def.setTasks(List.of(waitTask));
+        if (timeoutSeconds > 0) {
+            def.setTimeoutSeconds(timeoutSeconds);
+            def.setTimeoutPolicy(WorkflowDef.TimeoutPolicy.TIME_OUT_WF);
+        }
         metadataClient.updateWorkflowDefs(List.of(def));
 
         StartWorkflowRequest req = new StartWorkflowRequest();
@@ -88,7 +96,7 @@ public class SignalTaskTest {
     @DisplayName("async signal completes the WAIT task and advances the workflow")
     public void testAsyncSignalCompletesWaitTask() throws IOException {
         String wfName = "signal_e2e_async_" + System.nanoTime();
-        String workflowId = startBlockedWorkflow(wfName);
+        String workflowId = startBlockedWorkflow(wfName, 3600);
 
         Request req =
                 new Request.Builder()
@@ -108,6 +116,7 @@ public class SignalTaskTest {
                                     Task.Status.COMPLETED,
                                     wf.getTasks().get(0).getStatus(),
                                     "WAIT task should be COMPLETED after signal");
+                            assertEquals(Workflow.WorkflowStatus.COMPLETED, wf.getStatus());
                         });
     }
 

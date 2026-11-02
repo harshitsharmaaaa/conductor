@@ -34,6 +34,8 @@ import com.netflix.conductor.service.ExecutionLockService;
 import static com.netflix.conductor.core.utils.Utils.DECIDER_QUEUE;
 
 import static org.junit.Assert.assertTrue;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.longThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -111,6 +113,32 @@ public class TestWorkflowSweeper {
                         DECIDER_QUEUE,
                         workflowModel.getWorkflowId(),
                         defaultPostPoneOffSetSeconds * 1000);
+    }
+
+    @Test
+    public void testPostponeDurationForIndefiniteWaitUsesWorkflowTimeout() {
+        WorkflowModel workflowModel = new WorkflowModel();
+        workflowModel.setWorkflowId("1");
+        workflowModel.setCreateTime(System.currentTimeMillis() - 30_000);
+        WorkflowDef workflowDef = new WorkflowDef();
+        workflowDef.setTimeoutSeconds(60);
+        workflowModel.setWorkflowDefinition(workflowDef);
+        TaskModel taskModel = new TaskModel();
+        taskModel.setTaskId("task1");
+        taskModel.setTaskType(TaskType.TASK_TYPE_WAIT);
+        taskModel.setStatus(Status.IN_PROGRESS);
+        workflowModel.setTasks(List.of(taskModel));
+        when(properties.getWorkflowOffsetTimeout()).thenReturn(Duration.ofSeconds(1800));
+        when(properties.getMaxPostponeDurationSeconds())
+                .thenReturn(Duration.ofSeconds(defaulMmaxPostponeDurationSeconds));
+
+        workflowSweeper.unack(workflowModel, 1800);
+
+        verify(queueDAO)
+                .setUnackTimeout(
+                        eq(DECIDER_QUEUE),
+                        eq(workflowModel.getWorkflowId()),
+                        longThat(timeout -> timeout > 0 && timeout <= 31_000));
     }
 
     @Test
@@ -265,6 +293,7 @@ public class TestWorkflowSweeper {
         long workflowTimeout = 1800;
         WorkflowModel workflowModel = new WorkflowModel();
         workflowModel.setWorkflowId("1");
+        workflowModel.setCreateTime(System.currentTimeMillis());
         WorkflowDef workflowDef = new WorkflowDef();
         workflowDef.setTimeoutSeconds(workflowTimeout);
         workflowModel.setWorkflowDefinition(workflowDef);
@@ -278,7 +307,12 @@ public class TestWorkflowSweeper {
         workflowSweeper.unack(workflowModel, defaultPostPoneOffSetSeconds);
         verify(queueDAO)
                 .setUnackTimeout(
-                        DECIDER_QUEUE, workflowModel.getWorkflowId(), (workflowTimeout + 1) * 1000);
+                        eq(DECIDER_QUEUE),
+                        eq(workflowModel.getWorkflowId()),
+                        longThat(
+                                timeout ->
+                                        timeout >= workflowTimeout * 1000
+                                                && timeout <= (workflowTimeout + 1) * 1000));
     }
 
     @Test
@@ -286,6 +320,7 @@ public class TestWorkflowSweeper {
         long workflowTimeout = 1800;
         WorkflowModel workflowModel = new WorkflowModel();
         workflowModel.setWorkflowId("1");
+        workflowModel.setCreateTime(System.currentTimeMillis());
         WorkflowDef workflowDef = new WorkflowDef();
         workflowDef.setTimeoutSeconds(workflowTimeout);
         workflowModel.setWorkflowDefinition(workflowDef);
@@ -299,7 +334,12 @@ public class TestWorkflowSweeper {
         workflowSweeper.unack(workflowModel, defaultPostPoneOffSetSeconds);
         verify(queueDAO)
                 .setUnackTimeout(
-                        DECIDER_QUEUE, workflowModel.getWorkflowId(), (workflowTimeout + 1) * 1000);
+                        eq(DECIDER_QUEUE),
+                        eq(workflowModel.getWorkflowId()),
+                        longThat(
+                                timeout ->
+                                        timeout >= workflowTimeout * 1000
+                                                && timeout <= (workflowTimeout + 1) * 1000));
     }
 
     @Test
